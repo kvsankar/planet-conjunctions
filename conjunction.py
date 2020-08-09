@@ -1,11 +1,21 @@
 
+from datetime import timedelta
+import scipy.optimize
 from skyfield.api import load
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
+# constants
+
 pi_degrees = 180.0
 tau_degrees = 360.0
+
+# configuration values of interest
+
+planet_names_of_interest = ['sun', 'mercury', 'venus', 'mars', 'jupiter', 'saturn']
+conjunction_span_degrees = 45
+search_interval_days = 1
 
 pd.set_option('display.max_columns', None) 
 pd.set_option('display.max_rows', None)
@@ -29,9 +39,6 @@ planets = {
 
 earth = planets['earth']
 
-planet_names_of_interest = ['sun', 'mercury', 'venus', 'mars', 'jupiter', 'saturn']
-conjunction_span_degrees = 45
-
 def angle_span(angles):
     sorted_angles = np.sort(angles)
     sorted_angles_shift_left = np.roll(sorted_angles, -1)
@@ -46,7 +53,7 @@ def in_conjunction(angles):
     return (True, span) if (span < conjunction_span_degrees) else (False, span)
 
 ts = load.timescale(builtin=True)
-t = ts.utc(1600, 1, range(0, 500*366, 30), 0, 0, 0)
+t = ts.utc(1600, 1, range(0, 500*366, search_interval_days), 0, 0, 0)
 
 df = pd.DataFrame(index=t.utc_datetime(), columns=planet_names_of_interest + ['label'])
 
@@ -84,14 +91,40 @@ df.at[:, 'label'] = ''
 df.loc[now_but_not_earlier.astype(bool), 'label'] += ['Start']
 df.loc[now_but_not_later.astype(bool),   'label'] += ['End']
 
-print(df.loc[df['label'] != '', planet_names_of_interest + ['label']])
+print("Calulting exact times...")
 
+def f(jd):
+    t = ts.tt(jd=jd)
+    observer = earth.at(t)
+    angles = []
+    for pn in planet_names_of_interest: 
+        planet = planets[pn]
+        lat, lon, distance = observer.observe(planet).ecliptic_latlon()
+        angles += [lon.degrees]
+    return angle_span(angles) - conjunction_span_degrees
+    
 for index, row in tqdm(df.iterrows(), total=df.shape[0]):
     if (row['conjunction_start']):
-        pass
-    elif (row['conjunction_end']):
-        pass
-    else:
-        pass
+        t1_utc = index
+        t0_utc = index - timedelta(days=search_interval_days)
+
+        t0 = ts.from_datetime(t0_utc)
+        t1 = ts.from_datetime(t1_utc)
+
+        jd_conjunction = scipy.optimize.brentq(f, t0.tt, t1.tt)
+        df.at[index, 'start_time'] = ts.tt(jd=jd_conjunction).utc_jpl()
+
+    if (row['conjunction_end']):
+        t0_utc = index
+        t1_utc = index + timedelta(days=search_interval_days)
+
+        t0 = ts.from_datetime(t0_utc)
+        t1 = ts.from_datetime(t1_utc)
+
+        jd_conjunction = scipy.optimize.brentq(f, t0.tt, t1.tt)
+        df.at[index, 'end_time'] = ts.tt(jd=jd_conjunction).utc_jpl()
+
+print(df.loc[df['label'] != '', planet_names_of_interest + ['label', 'start_time', 'end_time']])
+
         
 # end of file
