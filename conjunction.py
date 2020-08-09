@@ -4,6 +4,9 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
+pi_degrees = 180.0
+tau_degrees = 360.0
+
 pd.set_option('display.max_columns', None) 
 pd.set_option('display.max_rows', None)
 pd.set_option('display.width', None)
@@ -29,22 +32,23 @@ earth = planets['earth']
 planet_names_of_interest = ['sun', 'mercury', 'venus', 'mars', 'jupiter', 'saturn']
 conjunction_span_degrees = 45
 
-ts = load.timescale(builtin=True)
-t = ts.utc(1600, 1, range(0, 500*366, 1), 0, 0, 0)
-
-df = pd.DataFrame(index=t.utc_datetime(), columns=planet_names_of_interest)
-
-def in_conjunction(angles):
-    sorted_angles = np.sort(angles.values)
-    # sorted_angles_shifted = sorted_angles.take(range(1, len(angles)+1), mode='wrap')
-    sorted_angles_shifted = np.roll(sorted_angles, -1)
-    # print("sorted_angles = ", sorted_angles, "sorted_angles_shifted = ", sorted_angles_shifted)
-    sorted_angles_diff = sorted_angles_shifted - sorted_angles
-    sorted_angles_diff[-1] += 360.0
-    sorted_angles_diff = list(map(lambda x: 360.0 - x if (x > 180.0) else x, sorted_angles_diff))
-    # print(sorted_angles_diff)
+def angle_span(angles):
+    sorted_angles = np.sort(angles)
+    sorted_angles_shift_left = np.roll(sorted_angles, -1)
+    sorted_angles_diff = sorted_angles_shift_left - sorted_angles
+    sorted_angles_diff[-1] += tau_degrees 
+    sorted_angles_diff = list(map(lambda x: tau_degrees - x if (x > pi_degrees) else x, sorted_angles_diff))
     max_angle = max(sorted_angles_diff)
-    return True if (max_angle < conjunction_span_degrees) else False
+    return max_angle
+    
+def in_conjunction(angles):
+    span = angle_span(angles.values)
+    return (True, span) if (span < conjunction_span_degrees) else (False, span)
+
+ts = load.timescale(builtin=True)
+t = ts.utc(1600, 1, range(0, 500*366, 30), 0, 0, 0)
+
+df = pd.DataFrame(index=t.utc_datetime(), columns=planet_names_of_interest + ['label'])
 
 for pn in planet_names_of_interest: 
     print("Computing coordinates of {}".format(pn))
@@ -56,26 +60,38 @@ for pn in planet_names_of_interest:
 print("Calculating conjunctions...")
 
 for index, row in tqdm(df.iterrows(), total=df.shape[0]):
-
-    result = in_conjunction(row)
+    values = row[planet_names_of_interest]
+    result, span = in_conjunction(values)
+    df.at[index, 'span_degrees'] = span 
     df.at[index, 'in_conjunction'] = result
 
-in_conjunction = df.loc[:, 'in_conjunction']
-in_conjunction_shifted = np.roll(in_conjunction, 1)
-df.loc[:, 'conjunction_change'] = in_conjunction ^ in_conjunction_shifted;
-conjunction_change = df.loc[:, 'conjunction_change']
+# In Conjunction Now              [False  False  True  True  True  False False]
+# In Conjunction Earlier                 [False  False True  True  True  False  False]
+# In Conjunction Later     [False  False  True   True  True  False False]
+# Conjuction Start                [False  False  True  False False False]
+# Conjuction End                  [False  False  False False True  False]
 
-df.loc[:, 'conjunction_start'] = in_conjunction & conjunction_change;
-df.loc[:, 'conjunction_end'] = np.invert(in_conjunction) & conjunction_change;
+now_but_not_earlier = np.append([0], df['in_conjunction'].values[1:] & np.invert(df['in_conjunction'].values[:-1]))
+now_but_not_later   = np.append(df['in_conjunction'].values[:-1] & np.invert(df['in_conjunction'].values[1:]), [0])
 
-print("Post processing conjunction data ...")
+df.loc[:, 'conjunction_start'] = False 
+df.loc[:, 'conjunction_end'] = False 
+
+df.loc[now_but_not_earlier.astype(bool), 'conjunction_start'] = True 
+df.loc[now_but_not_later.astype(bool),   'conjunction_end'] = True 
+
+df.at[:, 'label'] = ''
+df.loc[now_but_not_earlier.astype(bool), 'label'] += ['Start']
+df.loc[now_but_not_later.astype(bool),   'label'] += ['End']
+
+print(df.loc[df['label'] != '', planet_names_of_interest + ['label']])
 
 for index, row in tqdm(df.iterrows(), total=df.shape[0]):
     if (row['conjunction_start']):
-        df.at[index, 'label'] = 'Conjunction Start'
+        pass
     elif (row['conjunction_end']):
-        df.at[index, 'label'] = 'Conjunction End'
-
-print(df.loc[df['conjunction_change'] == True, planet_names_of_interest + ['label']])
-
+        pass
+    else:
+        pass
+        
 # end of file
