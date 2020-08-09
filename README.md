@@ -6,3 +6,5 @@ for calculations.
 
 In the context of the conjunctions.py script, a conjunction is used to refer to a
 grouping of planets within an angular span of interest with respect to thier ecliptic longitude. 
+
+The motivation to develop this script came from a question posted to a Bangalore Astronomy Society forum. 
